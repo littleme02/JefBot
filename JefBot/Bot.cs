@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
+using TwitchLib.TwitchClientClasses;
+using TwitchLib.Services;
 using TwitchLib;
 using TwitchLib.TwitchAPIClasses;
 using TwitchLib.Exceptions;
@@ -27,8 +29,8 @@ namespace JefBot
     /// </summary>
     class Bot
     {
-        ConnectionCredentials credentials;
-        TwitchChatClient ChatClient;
+        ConnectionCredentials Credentials;
+        TwitchClient ChatClient;
         Dictionary<string, string> settings = new Dictionary<string, string>();
 
         //constructor
@@ -43,16 +45,17 @@ namespace JefBot
             var settingsFile = @"./Settings/Settings.txt";
             if (File.Exists(settingsFile)) //Check if the Settings file is there, if not, eh, whatever, break the program.
             {
-
-                StreamReader file = new StreamReader(settingsFile); //Read the file, duh :)
-                string line; //keep line in memory outside the while loop, like the queen of Englan is remembered outside of Canada
-                while ((line = file.ReadLine()) != null)
+                using (StreamReader r = new StreamReader(settingsFile))
                 {
-                    if (line[0] != '#')//skip comments
+                    string line; //keep line in memory outside the while loop, like the queen of Englan is remembered outside of Canada
+                    while ((line = r.ReadLine()) != null)
                     {
-                        string[] split = line.Split('='); //Split the non comment lines at the equal signs
-                        settings.Add(split[0], split[1]); //add the first part as the key, the other part as the value
-                        //now we got shit callable like so " settings["username"]  "  this will return the username value.
+                        if (line[0] != '#')//skip comments
+                        {
+                            string[] split = line.Split('='); //Split the non comment lines at the equal signs
+                            settings.Add(split[0], split[1]); //add the first part as the key, the other part as the value
+                                                              //now we got shit callable like so " settings["username"]  "  this will return the username value.
+                        }
                     }
                 }
 
@@ -62,32 +65,35 @@ namespace JefBot
                 Thread.Sleep(5000);
                 Environment.Exit(0); // Closes the program if there's no setting, should just make it generate one, but as of now, don't delete the settings.
             }
-
-            credentials = new ConnectionCredentials(ConnectionCredentials.ClientType.Chat, new TwitchIpAndPort(settings["channel"], true), settings["username"], settings["oauth"]);
-            ChatClient = new TwitchChatClient(settings["channel"], credentials, '!');
-
-            ChatClient.OnMessageReceived += new EventHandler<TwitchChatClient.OnMessageReceivedArgs>(RecivedMessage);
-            ChatClient.OnCommandReceived += new EventHandler<TwitchChatClient.OnCommandReceivedArgs>(RecivedCommand);
-            ChatClient.OnNewSubscriber += new EventHandler<TwitchChatClient.OnNewSubscriberArgs>(RecivedNewSub);
-            ChatClient.OnReSubscriber += new EventHandler<TwitchChatClient.OnReSubscriberArgs>(RecivedResub);
-            ChatClient.OnConnected += new EventHandler<TwitchChatClient.OnConnectedArgs>(Connected);
+            foreach (var item in settings)
+            {
+                Console.WriteLine(item);
+            }
+            Credentials = new ConnectionCredentials(settings["username"], settings["oauth"]);
+            ChatClient = new TwitchClient(Credentials, channel: settings["channel"], chatCommandIdentifier: '!', logging: Convert.ToBoolean(settings["debug"]));
+           
+            ChatClient.OnMessageReceived += new EventHandler<TwitchClient.OnMessageReceivedArgs>(RecivedMessage);
+            ChatClient.OnChatCommandReceived += new EventHandler<TwitchClient.OnChatCommandReceivedArgs>(RecivedCommand);
+            ChatClient.OnNewSubscriber += new EventHandler<TwitchClient.OnNewSubscriberArgs>(RecivedNewSub);
+            ChatClient.OnReSubscriber += new EventHandler<TwitchClient.OnReSubscriberArgs>(RecivedResub);
+            ChatClient.OnConnected += new EventHandler<TwitchClient.OnConnectedArgs>(Connected);
 
             ChatClient.Connect();
             Console.WriteLine("Bot init Complete");
         }
 
-        private void Connected(object sender, TwitchChatClient.OnConnectedArgs e)
+        private void Connected(object sender, TwitchClient.OnConnectedArgs e)
         {
-            Console.WriteLine($@"Connected to {e.Channel} with name {e.Username}");
+            Console.WriteLine($@"Connected to {e.AutoJoinChannel} with name {e.Username}");
         }
 
-        private void RecivedResub(object sender, TwitchChatClient.OnReSubscriberArgs e)
+        private void RecivedResub(object sender, TwitchClient.OnReSubscriberArgs e)
         {
             Console.WriteLine($@"{e.ReSubscriber.DisplayName} subbed for {e.ReSubscriber.Months} with the message '{e.ReSubscriber.ResubMessage}' :)");
             //ChatClient.SendMessage($"panicBasket {e.ReSubscriber.DisplayName} panicBasket ");
         }
 
-        private void RecivedNewSub(object sender, TwitchChatClient.OnNewSubscriberArgs e)
+        private void RecivedNewSub(object sender, TwitchClient.OnNewSubscriberArgs e)
         {
             Console.WriteLine($@"{e.Subscriber.Name} Just subbed! What a bro!' :)");
             //ChatClient.SendMessage("panicBasket " + e.Subscriber.Name + " panicBasket");
@@ -99,7 +105,7 @@ namespace JefBot
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e"></param>
-        private void RecivedCommand(object sender, TwitchChatClient.OnCommandReceivedArgs e)
+        private void RecivedCommand(object sender, TwitchClient.OnChatCommandReceivedArgs e)
         {
             Console.WriteLine($@"Just got a {e.Command} Command. Doing it if it's real");
 
@@ -112,17 +118,17 @@ namespace JefBot
 
             if (command == "help" || command == "h")
             {
-                ChatClient.SendMessage("Just do !quote or !q and some text after it to send a quote in for review");
+                ChatClient.SendMessage(new JoinedChannel(e.Channel),"Just do !quote or !q and some text after it to send a quote in for review");
             }
 
             if (command == "uptime" || command == "up" || command == "u")
             {
-                Uptime();
+                Uptime(new JoinedChannel(e.Channel));
             }
 
             if (command == "modlist")
             {
-                ChatClient.SendMessage("Rimworld Modlist: http://jefmajor.com/modlist.png");
+                ChatClient.SendMessage(new JoinedChannel(e.Channel), "Rimworld Modlist: http://i.imgur.com/z6Mh76F.png SteamModList: http://tinyurl.com/hch8zob");
             }
         }
 
@@ -130,85 +136,53 @@ namespace JefBot
         /// Gets the uptime with a wonky twitch lib thing, it gets it in jef timezone and converts it somethign weird, so i have to substract 9 hours out of it.
         /// Gotta update this lib soon and see if they fixed it.
         /// </summary>
-        private async void Uptime()
+        private async void Uptime(JoinedChannel channel)
         {
-            try
-            {
-                Console.WriteLine("uptime check");
-                TimeSpan uptime = await TwitchApi.GetUptime(settings["channel"]);
-                ChatClient.SendMessage($"Time: {uptime.Hours - 9}h {uptime.Minutes}m {uptime.Seconds}s");
 
-            }
-            catch (Exception e)
+            Console.WriteLine("uptime check");
+            TimeSpan uptime = await TwitchApi.GetUptime(channel.Channel);
+            if (uptime != new TimeSpan())
             {
-                ChatClient.SendMessage("he's offline i think? :)");
-                Console.WriteLine(e.Message);
+                ChatClient.SendMessage(channel, $"Time: {uptime.Hours}h {uptime.Minutes}m {uptime.Seconds}s");
             }
-                      //ChatClient.SendMessage(string.Format("uptime: {1} hours, {2} minutes, {3} seconds", uptime.Hours, uptime.Minutes, uptime.Seconds));
+            else
+            {
+                ChatClient.SendMessage(channel, "he's offline i think? :)");
+            }
         }
         
-        private void Quote(TwitchChatClient.OnCommandReceivedArgs e)
+        //meh, i din't want brackets in this function, so i removed them all :)
+        private void Quote(TwitchClient.OnChatCommandReceivedArgs e)
         {
+            //passive agressie anti double quote checker
             bool quoted = false;
-            try
-            {
-                try
-                {
-                    if (e.ArgumentsAsString[0] == '"')
-                    {
-                        quoted = true;
-                    }
-                }
-                catch (Exception meh)
-                {
-                    //fuck it, quote is just empty
-                }
-                
-                MailMessage mail = new MailMessage();
-                SmtpClient smtpserver = new SmtpClient(settings["serveraddress"]);
-                mail.From = new MailAddress(settings["mailfrom"]);
-                mail.To.Add(settings["mailto"]);
-                mail.Body = $"\"{e.ArgumentsAsString}\"| {System.DateTime.Now} submitted by {e.ChatMessage.DisplayName}";
-                mail.Subject = "Quote for review " + e.Channel;
-                smtpserver.Port = 25;
-              
-                smtpserver.Credentials = new System.Net.NetworkCredential(settings["mailusername"], settings["mailpassword"]);
-                smtpserver.EnableSsl = Convert.ToBoolean(settings["useSSL"]); 
-                smtpserver.Send(mail);
-                Console.WriteLine("Just sent this mail: " + mail.Body);
-                
-            }
-            catch (Exception er)
-            {
-                ChatClient.SendMessage("Shit, tell mikaelssen: " + er.Message);
-                Console.WriteLine(er.Message);
-                Console.WriteLine(er.InnerException);
-            }
+            if (e.ArgumentsAsString[0] == '"')
+                quoted = true;
+
+            using (StreamWriter w = File.AppendText("quotes.txt"))
+                w.Write($"\"{e.ArgumentsAsString}\"| {DateTime.Now} submitted by {e.ChatMessage.DisplayName}" + Environment.NewLine);
+
             if (!quoted)
-            {
-                ChatClient.SendMessage("👌 Thanks!");
-            }else
-            {
-                ChatClient.SendMessage("👌 please don't add \" to the quotes yourself :)");
-            }
-            
+                ChatClient.SendMessage(new JoinedChannel(e.Channel), "👌 Thanks!");
+            else
+                ChatClient.SendMessage(new JoinedChannel(e.Channel), "👌 please don't add \" to the quotes yourself :)");
         }
 
-        //Console.WriteLine($@"");
-
-        private void RecivedMessage(object sender, TwitchChatClient.OnMessageReceivedArgs e)
+        private void RecivedMessage(object sender, TwitchClient.OnMessageReceivedArgs e)
         {
             Console.WriteLine($"{e.ChatMessage.DisplayName} : {e.ChatMessage.Message}");
-           // Uptime();
-            //string msg = $"{e.ChatMessage.DisplayName}:  \"{e.ChatMessage.Message}\"| {System.DateTime.Now} ";
-            //email("mikael@rubixy.com", msg,e.ChatMessage.Channel);
         }
 
         public void run()
         {
             while (true)
             {
-                ChatClient.SendMessage(Console.ReadLine());
+                //anything we type into the console is broadcasted to every channel we're inn. so don't be chatty :^)
+                string msg = Console.ReadLine();
+                foreach (var channel in ChatClient.JoinedChannels)
+                {
+                    ChatClient.SendMessage(channel, msg);
+                }
             }
         }
     }
